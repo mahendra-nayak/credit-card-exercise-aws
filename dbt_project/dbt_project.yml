@@ -1,0 +1,38 @@
+name: cc_transactions_lake
+version: '1.0.0'
+config-version: 2
+profile: cc_transactions_lake
+model-paths: ['models']
+models:
+  cc_transactions_lake:
+    silver:
+      +materialized: table
+      silver_accounts:
+        +materialized: external
+        +file_format: parquet
+        +location: 's3://credit-card-lake/data/silver/accounts/data.parquet'
+      silver_transaction_codes:
+        +materialized: external
+        +file_format: parquet
+        +location: 's3://credit-card-lake/data/silver/transaction_codes/data.parquet'
+        +post-hook: >
+          {{ exceptions.raise_compiler_error('invalid debit_credit_indicator')
+             if execute and
+             dbt_utils.get_single_value('SELECT COUNT(*) FROM read_parquet(\'s3://credit-card-lake/data/silver/transaction_codes/data.parquet\') WHERE debit_credit_indicator NOT IN (\'DR\',\'CR\')')
+             | int > 0 }}
+      silver_transactions:
+        +post-hook: >
+          {{ exceptions.raise_compiler_error('null _signed_amount in silver_transactions')
+             if execute and
+             dbt_utils.get_single_value('SELECT COUNT(*) FROM read_parquet(\'s3://credit-card-lake/data/silver/transactions/date=' ~ var("target_date") ~ '/data.parquet\') WHERE _signed_amount IS NULL')
+             | int > 0 }}
+    gold:
+      +materialized: table
+      gold_daily_summary:
+        +materialized: external
+        +file_format: parquet
+        +location: 's3://credit-card-lake/data/gold/.tmp_daily_summary.parquet'
+      gold_weekly_account_summary:
+        +materialized: external
+        +file_format: parquet
+        +location: 's3://credit-card-lake/data/gold/.tmp_weekly_account_summary.parquet'
