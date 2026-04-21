@@ -14,6 +14,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
+from pipeline.run_log import sanitise_error as _sanitise_error, write_run_log_row as _write_run_log_row
 from pipeline.s3_utils import s3_copy, s3_delete, s3_exists, get_duckdb_s3_conn
 
 BUCKET_ROOT = 's3://credit-card-lake'
@@ -35,35 +36,10 @@ GOLD_STAGING = {
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _sanitise_error(text: str) -> str:
-    """Return the last 500 chars of dbt stderr — enough context, not too long."""
-    return (text or '').strip()[-500:]
-
-
-def _write_run_log_row(run_id: str, model: str, layer: str,
-                       started_at: datetime, completed_at: datetime,
-                       status: str, records_written: int = 0,
-                       error_message: str = '') -> None:
-    """
-    Stub — will be replaced by full S3 run log writer in Task 5.2.
-    For now prints to stdout so the audit trail is visible in container logs.
-    """
-    print(
-        f'[run_log] run_id={run_id} model={model} layer={layer} '
-        f'status={status} records={records_written} '
-        f'started={started_at.isoformat()} completed={completed_at.isoformat()}'
-        + (f' error={error_message}' if error_message else '')
-    )
-
-
-# ---------------------------------------------------------------------------
 # Gold runner
 # ---------------------------------------------------------------------------
 
-def run_gold(run_id: str) -> None:
+def run_gold(run_id: str, pipeline_type: str = 'HISTORICAL') -> None:
     """
     Invoke both Gold dbt models and atomically rename each staging file
     to its canonical S3 path.
@@ -102,7 +78,8 @@ def run_gold(run_id: str) -> None:
 
             _write_run_log_row(
                 run_id, model_name, 'GOLD',
-                started_at, completed_at,
+                started_at=started_at, completed_at=completed_at,
+                pipeline_type=pipeline_type,
                 status='SUCCESS', records_written=records_written,
             )
             print(f'[gold] {model_name}: SUCCESS ({records_written} rows) -> {canonical_path}')
@@ -113,7 +90,8 @@ def run_gold(run_id: str) -> None:
 
             _write_run_log_row(
                 run_id, model_name, 'GOLD',
-                started_at, completed_at,
+                started_at=started_at, completed_at=completed_at,
+                pipeline_type=pipeline_type,
                 status='FAILED',
                 error_message=_sanitise_error(result.stderr),
             )
