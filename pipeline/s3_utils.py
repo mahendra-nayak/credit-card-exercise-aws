@@ -146,25 +146,29 @@ def s3_copy(src: str, dst: str) -> None:
 def get_duckdb_s3_conn() -> duckdb.DuckDBPyConnection:
     """
     Return an in-memory DuckDB connection with the httpfs extension loaded
-    and S3 credentials injected from environment variables.
+    and S3 credentials injected.
+
+    Credentials are resolved via boto3's full credential chain (env vars →
+    ~/.aws/credentials → IAM instance role), so the function works both
+    locally and inside Docker containers with injected env vars.
 
     Use this everywhere a DuckDB query must read from or write to S3.
     """
     conn = duckdb.connect()
     conn.execute("INSTALL httpfs; LOAD httpfs;")
 
-    region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+    # Resolve credentials through boto3's chain (env vars, ~/.aws, IAM role)
+    session = boto3.Session()
+    creds   = session.get_credentials()
+    region  = session.region_name or os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+
     conn.execute(f"SET s3_region='{region}';")
 
-    key    = os.environ.get('AWS_ACCESS_KEY_ID', '')
-    secret = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
-    token  = os.environ.get('AWS_SESSION_TOKEN', '')
-
-    if key:
-        conn.execute(f"SET s3_access_key_id='{key}';")
-    if secret:
-        conn.execute(f"SET s3_secret_access_key='{secret}';")
-    if token:
-        conn.execute(f"SET s3_session_token='{token}';")
+    if creds:
+        frozen = creds.get_frozen_credentials()
+        conn.execute(f"SET s3_access_key_id='{frozen.access_key}';")
+        conn.execute(f"SET s3_secret_access_key='{frozen.secret_key}';")
+        if frozen.token:
+            conn.execute(f"SET s3_session_token='{frozen.token}';")
 
     return conn
