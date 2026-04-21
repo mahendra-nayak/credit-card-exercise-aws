@@ -7,6 +7,8 @@ Source CSVs are read from s3://credit-card-lake/source/.
 """
 import argparse
 import json
+import os
+import signal
 import subprocess
 import sys
 import uuid
@@ -15,6 +17,9 @@ from datetime import datetime, timezone
 from pipeline.s3_utils import s3_copy, s3_delete, s3_exists, get_duckdb_s3_conn
 
 BUCKET_ROOT = 's3://credit-card-lake'
+
+# PID file lives on the local filesystem (process management artifact, not data)
+PID_FILE = 'data/pipeline/pipeline.pid'
 
 # Gold staging → canonical paths
 GOLD_STAGING = {
@@ -119,8 +124,40 @@ def run_gold(run_id: str) -> None:
 
 
 def main() -> None:
-    run_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())   # INV-43a: must be the first assignment in main()
 
+    # ------------------------------------------------------------------
+    # PID file lifecycle (INV-41a–e)
+    # ------------------------------------------------------------------
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+
+    if os.path.exists(PID_FILE):
+        pid = int(open(PID_FILE).read().strip())
+        try:
+            os.kill(pid, 0)                          # signal 0 = existence check
+            print(f'Error: pipeline already running (PID {pid})', file=sys.stderr)
+            sys.exit(1)
+        except ProcessLookupError:
+            os.remove(PID_FILE)                      # stale — process is dead
+        except PermissionError:
+            print(f'Error: pipeline already running (PID {pid})', file=sys.stderr)
+            sys.exit(1)
+        except OSError:
+            # Windows: os.kill(pid, 0) is unreliable; treat as stale
+            os.remove(PID_FILE)
+
+    open(PID_FILE, 'w').write(str(os.getpid()))
+
+    def _sigterm(signum, frame):
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm)
+
+    # ------------------------------------------------------------------
+    # Argument parsing (after PID write — INV-41a)
+    # ------------------------------------------------------------------
     parser = argparse.ArgumentParser(
         prog='pipeline.py',
         description='Credit card lake pipeline (S3 storage variant)',
@@ -144,18 +181,22 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.historical:
-        print(f'[historical] run_id={run_id} (not yet implemented)')
-        sys.exit(0)
-    elif args.incremental:
-        print(f'[incremental] run_id={run_id} (not yet implemented)')
-        sys.exit(0)
-    elif args.reset_watermark:
-        print(f'[reset-watermark] run_id={run_id} (not yet implemented)')
-        sys.exit(0)
-    else:
-        parser.print_help()
-        sys.exit(0)
+    try:
+        if args.historical:
+            print(f'[historical] run_id={run_id} (not yet implemented)')
+            sys.exit(0)
+        elif args.incremental:
+            print(f'[incremental] run_id={run_id} (not yet implemented)')
+            sys.exit(0)
+        elif args.reset_watermark:
+            print(f'[reset-watermark] run_id={run_id} (not yet implemented)')
+            sys.exit(0)
+        else:
+            parser.print_help()
+            sys.exit(0)
+    finally:
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
 
 
 if __name__ == '__main__':
