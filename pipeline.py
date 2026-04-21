@@ -14,6 +14,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
+from pipeline.control import read_watermark, write_watermark
 from pipeline.run_log import sanitise_error as _sanitise_error, write_run_log_row as _write_run_log_row
 from pipeline.s3_utils import s3_copy, s3_delete, s3_exists, get_duckdb_s3_conn
 
@@ -167,7 +168,18 @@ def main() -> None:
             print(f'[incremental] run_id={run_id} (not yet implemented)')
             sys.exit(0)
         elif args.reset_watermark:
-            print(f'[reset-watermark] run_id={run_id} (not yet implemented)')
+            if not args.confirm:
+                print('Error: --confirm required for --reset-watermark', file=sys.stderr)
+                sys.exit(1)
+            prior = read_watermark()
+            print(f'Current watermark: {prior or "none"}')
+            try:
+                target = datetime.strptime(args.reset_watermark, '%Y-%m-%d').date()
+            except ValueError:
+                print(f"Error: invalid date '{args.reset_watermark}'", file=sys.stderr)
+                sys.exit(1)
+            write_watermark(target, 'manual-reset')
+            print(f'Watermark reset to {target}')
             sys.exit(0)
         else:
             parser.print_help()
