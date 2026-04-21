@@ -124,6 +124,24 @@ def run_silver_static(run_id: str) -> None:
     _validate_silver_transaction_codes()
 
 
+def run_silver_transaction_codes(run_id: str) -> None:
+    """
+    Run dbt silver_transaction_codes only. Used by the historical pipeline
+    on first run (once-only promotion — RQ-5).
+    Validates no invalid debit_credit_indicator after dbt completes.
+    """
+    _dbt_run(['silver_transaction_codes'])
+    _validate_silver_transaction_codes()
+
+
+def run_silver_accounts(run_id: str) -> None:
+    """
+    Run dbt silver_accounts only. Re-run on every historical date so that
+    each new bronze/accounts partition is reflected in the Silver view.
+    """
+    _dbt_run(['silver_accounts'])
+
+
 def run_silver_transactions(target_date: str, run_id: str) -> None:
     """
     Run dbt silver_transactions for *target_date*.
